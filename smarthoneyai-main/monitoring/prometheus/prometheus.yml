@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: honeypot-ai
+    environment: production
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [127.0.0.1:9090]
+
+  - job_name: honeypot-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: [api:4000]
+        labels:
+          component: api
+
+  - job_name: honeypot-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: [worker:4001]
+        labels:
+          component: worker

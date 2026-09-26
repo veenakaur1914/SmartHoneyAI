@@ -1,0 +1,75 @@
+groups:
+  - name: honeypot-platform
+    rules:
+      - alert: HoneypotApiUnavailable
+        expr: up{job="honeypot-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: SmartHoneyAI API is unavailable
+          description: Prometheus has been unable to scrape the API for two minutes.
+
+      - alert: AgentIngestionErrors
+        expr: rate(honeypot_agent_ingestion_errors_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent ingestion errors are elevated
+          description: More than 0.1 ingestion errors per second have persisted for ten minutes.
+
+      - alert: WorkerQueueLagHigh
+        expr: honeypot_queue_oldest_job_age_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Background jobs are delayed
+          description: The oldest queued job is more than 60 seconds old.
+
+      - alert: DeadLetterQueueNotEmpty
+        expr: honeypot_dead_letter_jobs > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Jobs are in the dead-letter queue
+          description: At least one background job exhausted its retries.
+
+      - alert: AiProviderFailureRateHigh
+        expr: rate(honeypot_ai_requests_total{result="failed"}[15m]) / clamp_min(rate(honeypot_ai_requests_total[15m]), 0.001) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI provider failure rate is high
+          description: More than 20 percent of AI requests have failed for fifteen minutes.
+
+      - alert: RuleSynchronizationStale
+        expr: honeypot_site_policy_sync_age_seconds > 900
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A site has stale policy state
+          description: At least one connected site has not synchronized policy for more than fifteen minutes.
+
+      - alert: SignatureReplayFailures
+        expr: increase(honeypot_agent_auth_failures_total{reason="replay"}[10m]) >= 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Replayed agent requests detected
+          description: Five or more replay-protection failures occurred in ten minutes.
+
+      - alert: CrossTenantAuthorizationFailureSpike
+        expr: increase(honeypot_authorization_denials_total{reason="tenant_scope"}[10m]) >= 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Cross-tenant authorization failures increased
+          description: Investigate possible IDOR attempts or an application regression.
+

@@ -1,0 +1,79 @@
+name: smarthoneyai-client-sensor
+
+services:
+  network-sensor-agent:
+    profiles: ["sensor"]
+    build:
+      context: ./agent
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    environment:
+      NODE_ENV: production
+      SENSOR_DATA_DIR: /data
+      NETWORK_SENSOR_NAME: ${NETWORK_SENSOR_NAME:?Set NETWORK_SENSOR_NAME}
+      NETWORK_SENSOR_ENROLLMENT_TOKEN: ${NETWORK_SENSOR_ENROLLMENT_TOKEN:-}
+      NETWORK_SENSOR_CONTROL_PLANE_URL: ${NETWORK_SENSOR_CONTROL_PLANE_URL:?Set NETWORK_SENSOR_CONTROL_PLANE_URL}
+      NETWORK_SENSOR_ALLOWLIST: ${NETWORK_SENSOR_ALLOWLIST:?Set NETWORK_SENSOR_ALLOWLIST}
+      PROVIDER_FIREWALL_ALLOWLIST_CONFIRMED: ${PROVIDER_FIREWALL_ALLOWLIST_CONFIRMED:?Confirm the provider firewall allowlist}
+    volumes:
+      - sensor_credentials:/data
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    expose:
+      - "1514"
+      - "4010"
+    networks:
+      - sensor_internal
+      - sensor_egress
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4010/health/live || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    mem_limit: 128m
+    cpus: 0.25
+
+  opencanary:
+    profiles: ["sensor"]
+    image: thinkst/opencanary:0.9.9@sha256:15cbc354552464f281a4af8ddf271b3e78804a9cc800fd408205e16639c35784
+    restart: unless-stopped
+    init: true
+    user: "65534:65534"
+    read_only: true
+    entrypoint: ["/opencanary/.venv/bin/twistd"]
+    command: ["-noy", "/opencanary/.venv/bin/opencanary.tac", "--pidfile", "/run/opencanaryd.pid"]
+    volumes:
+      - ./opencanary.conf:/etc/opencanaryd/opencanary.conf:ro
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/tmp:size=16m,mode=1777
+      - /run:size=4m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${SENSOR_BIND_ADDRESS:-0.0.0.0}:${SENSOR_SSH_PORT:-2222}:2222"
+      - "${SENSOR_BIND_ADDRESS:-0.0.0.0}:${SENSOR_MYSQL_PORT:-13306}:13306"
+      - "${SENSOR_BIND_ADDRESS:-0.0.0.0}:${SENSOR_REDIS_PORT:-16379}:16379"
+    networks:
+      - sensor_internal
+      - sensor_ingress
+    depends_on:
+      network-sensor-agent:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.25
+
+networks:
+  sensor_internal:
+    internal: true
+  sensor_ingress:
+    driver: bridge
+  sensor_egress:
+
+volumes:
+  sensor_credentials:

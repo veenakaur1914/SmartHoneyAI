@@ -1,0 +1,219 @@
+name: honeypot-ai-perf
+
+x-perf-agent-seed: &perf-agent-seed
+  image: node:22.17.0-alpine3.22
+  user: "${PERF_UID:-1000}:${PERF_GID:-1000}"
+  profiles: ["perf-seed"]
+  restart: "no"
+  read_only: true
+  tmpfs:
+    - /tmp:size=32m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  environment:
+    PERF_AGENT_COMMAND: seed
+    PERF_AGENT_BASE_URL: http://api:4000
+    PERF_AGENT_ORIGIN: https://localhost
+    ALLOW_REMOTE_SYNTHETIC_DATA: "1"
+    REMOTE_SYNTHETIC_HOST: api
+    PERF_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+    PERF_RUN_ID: ${PERF_RUN_ID:?Set PERF_RUN_ID}
+    PERF_AGENT_TOTAL: "49"
+    PERF_AGENT_SHARD_SIZE: "10"
+  secrets:
+    - platform_admin_password
+  volumes:
+    - ./scripts/performance-agents.mjs:/work/performance-agents.mjs:ro
+    - ./scripts/synthetic-target-guard.mjs:/work/synthetic-target-guard.mjs:ro
+    - ${PERF_AGENT_DIR:?Set PERF_AGENT_DIR}:/agents
+  networks:
+    - app
+  depends_on:
+    api:
+      condition: service_healthy
+  entrypoint: ["node", "/work/performance-agents.mjs"]
+  mem_limit: 128m
+  cpus: 0.25
+
+services:
+  worker:
+    environment:
+      ANALYSIS_PROVIDER: local
+      ALLOW_LOCAL_ANALYSIS: "1"
+      # Eight local classifier workers drain the measured backlog comfortably
+      # without competing with the real WordPress request path during spikes.
+      ANALYSIS_CONCURRENCY: "8"
+      ANALYSIS_RATE_LIMIT_MAX: "1800"
+
+  nginx:
+    ports: !override
+      - 127.0.0.1:${HTTP_PORT:-80}:8080
+      - 127.0.0.1:${HTTPS_PORT:-443}:8443
+    networks:
+      app:
+        aliases:
+          - host.docker.internal
+      edge: {}
+
+  wordpress:
+    ports: !override
+      - 127.0.0.1:${WORDPRESS_PORT:-8080}:80
+    # The base demo intentionally uses a laptop-light 1 CPU / 512 MiB cap.
+    # The production-style profile gives Apache/PHP enough of the declared
+    # 8 CPU / 8 GiB Docker budget to exercise application capacity instead of
+    # immediately benchmarking an artificial demo limit.
+    cpus: 6.5
+    mem_limit: 3g
+    volumes:
+      - ./performance/apache-performance.conf:/etc/apache2/conf-enabled/zz-performance.conf:ro
+
+  wordpress-db:
+    # Apache may run up to 225 PHP workers in this production-style profile.
+    # MariaDB's image default (151) can reject WordPress connections before
+    # the web tier reaches its declared ceiling, so retain explicit headroom.
+    command: ["--max-connections=300"]
+    cpus: 2.0
+    mem_limit: 1536m
+
+  wordpress-cron:
+    cpus: 0.75
+    mem_limit: 256m
+
+  perf-agent-seed-1:
+    <<: *perf-agent-seed
+    environment:
+      PERF_AGENT_COMMAND: seed
+      PERF_AGENT_BASE_URL: http://api:4000
+      PERF_AGENT_ORIGIN: https://localhost
+      ALLOW_REMOTE_SYNTHETIC_DATA: "1"
+      REMOTE_SYNTHETIC_HOST: api
+      PERF_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+      PERF_RUN_ID: ${PERF_RUN_ID:?Set PERF_RUN_ID}
+      PERF_AGENT_TOTAL: "49"
+      PERF_AGENT_SHARD_SIZE: "10"
+      PERF_AGENT_SHARD_INDEX: "0"
+
+  perf-agent-seed-2:
+    <<: *perf-agent-seed
+    environment:
+      PERF_AGENT_COMMAND: seed
+      PERF_AGENT_BASE_URL: http://api:4000
+      PERF_AGENT_ORIGIN: https://localhost
+      ALLOW_REMOTE_SYNTHETIC_DATA: "1"
+      REMOTE_SYNTHETIC_HOST: api
+      PERF_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+      PERF_RUN_ID: ${PERF_RUN_ID:?Set PERF_RUN_ID}
+      PERF_AGENT_TOTAL: "49"
+      PERF_AGENT_SHARD_SIZE: "10"
+      PERF_AGENT_SHARD_INDEX: "1"
+
+  perf-agent-seed-3:
+    <<: *perf-agent-seed
+    environment:
+      PERF_AGENT_COMMAND: seed
+      PERF_AGENT_BASE_URL: http://api:4000
+      PERF_AGENT_ORIGIN: https://localhost
+      ALLOW_REMOTE_SYNTHETIC_DATA: "1"
+      REMOTE_SYNTHETIC_HOST: api
+      PERF_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+      PERF_RUN_ID: ${PERF_RUN_ID:?Set PERF_RUN_ID}
+      PERF_AGENT_TOTAL: "49"
+      PERF_AGENT_SHARD_SIZE: "10"
+      PERF_AGENT_SHARD_INDEX: "2"
+
+  perf-agent-seed-4:
+    <<: *perf-agent-seed
+    environment:
+      PERF_AGENT_COMMAND: seed
+      PERF_AGENT_BASE_URL: http://api:4000
+      PERF_AGENT_ORIGIN: https://localhost
+      ALLOW_REMOTE_SYNTHETIC_DATA: "1"
+      REMOTE_SYNTHETIC_HOST: api
+      PERF_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+      PERF_RUN_ID: ${PERF_RUN_ID:?Set PERF_RUN_ID}
+      PERF_AGENT_TOTAL: "49"
+      PERF_AGENT_SHARD_SIZE: "10"
+      PERF_AGENT_SHARD_INDEX: "3"
+
+  perf-agent-seed-5:
+    <<: *perf-agent-seed
+    environment:
+      PERF_AGENT_COMMAND: seed
+      PERF_AGENT_BASE_URL: http://api:4000
+      PERF_AGENT_ORIGIN: https://localhost
+      ALLOW_REMOTE_SYNTHETIC_DATA: "1"
+      REMOTE_SYNTHETIC_HOST: api
+      PERF_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+      PERF_RUN_ID: ${PERF_RUN_ID:?Set PERF_RUN_ID}
+      PERF_AGENT_TOTAL: "49"
+      PERF_AGENT_SHARD_SIZE: "10"
+      PERF_AGENT_SHARD_INDEX: "4"
+
+  k6:
+    image: grafana/k6:2.0.0
+    user: "${PERF_UID:-1000}:${PERF_GID:-1000}"
+    profiles: ["perf"]
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      WORDPRESS_INTERNAL_URL: http://wordpress
+      WORDPRESS_TEST_HOST: localhost:8080
+      PLATFORM_URL: https://host.docker.internal:8443
+      ALLOW_REMOTE_SYNTHETIC_DATA: "1"
+      REMOTE_SYNTHETIC_HOSTS: wordpress,host.docker.internal
+      SSL_CERT_FILE: /run/honeypot-ai/control-plane-ca.pem
+      PERF_RUN_ID: ${PERF_RUN_ID:?Set PERF_RUN_ID}
+    secrets:
+      - wordpress_test_source_secret
+    volumes:
+      - ./performance/k6:/scripts:ro
+      - ./scripts/synthetic-target-guard.mjs:/scripts/synthetic-target-guard.mjs:ro
+      - ${PERF_ARTIFACT_DIR:?Set PERF_ARTIFACT_DIR}:/evidence
+      - ${E2E_SECRET_DIR:-./secrets/perf}/tls/fullchain.pem:/run/honeypot-ai/control-plane-ca.pem:ro
+    networks:
+      - wordpress_data
+      - app
+    depends_on:
+      wordpress-provision:
+        condition: service_completed_successfully
+      nginx:
+        condition: service_healthy
+    entrypoint: ["k6"]
+    mem_limit: 512m
+    cpus: 1.0
+
+  wordpress-phpunit:
+    image: wordpress:cli-2.12.0-php8.3
+    user: "0:0"
+    profiles: ["perf-test"]
+    restart: "no"
+    environment:
+      WP_TESTS_DIR: /tmp/wordpress-tests-lib
+      WP_CORE_DIR: /tmp/wordpress
+    secrets:
+      - wordpress_db_root_password
+    volumes:
+      - ./plugins/wordpress:/src:ro
+      - ./scripts/install-wordpress-tests.sh:/work/install-wordpress-tests.sh:ro
+      - ./performance/wordpress-phpunit.sh:/work/wordpress-phpunit.sh:ro
+    networks:
+      - wordpress_data
+      - egress
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+    entrypoint: ["sh", "/work/wordpress-phpunit.sh"]
+    mem_limit: 512m
+    cpus: 1.0
+
+secrets:
+  platform_admin_password:
+    file: ${E2E_SECRET_DIR:-./secrets/perf}/platform_admin_password

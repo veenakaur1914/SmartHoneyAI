@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<ruleset name="SmartHoneyAI WordPress Agent">
+    <description>WordPress coding standards for the production plugin.</description>
+
+    <file>honeypot-ai.php</file>
+    <file>includes</file>
+    <file>uninstall.php</file>
+
+    <arg name="basepath" value="."/>
+    <arg name="colors"/>
+    <arg value="sp"/>
+
+    <rule ref="WordPress">
+        <!-- The plugin uses reviewed transactional queue SQL with controlled table names. -->
+        <exclude name="WordPress.DB.DirectDatabaseQuery"/>
+        <exclude name="WordPress.DB.PreparedSQL.InterpolatedNotPrepared"/>
+        <exclude name="WordPress.DB.PreparedSQL.NotPrepared"/>
+        <!-- Admin handlers centralize nonce checks in authorize(); public decoys do not mutate account state. -->
+        <exclude name="WordPress.Security.NonceVerification"/>
+        <!-- Runtime classes are internal and kept compact; public API docs live in README.md. -->
+        <exclude name="Squiz.Commenting.ClassComment.Missing"/>
+        <exclude name="Squiz.Commenting.FileComment.Missing"/>
+        <exclude name="Squiz.Commenting.FunctionComment.Missing"/>
+        <exclude name="Squiz.Commenting.VariableComment.Missing"/>
+    </rule>
+</ruleset>

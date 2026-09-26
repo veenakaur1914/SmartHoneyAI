@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<phpunit bootstrap="tests/bootstrap.php" colors="true" beStrictAboutOutputDuringTests="true">
+  <testsuites>
+    <testsuite name="SmartHoneyAI WordPress Agent">
+      <directory suffix="Test.php">tests</directory>
+    </testsuite>
+  </testsuites>
+</phpunit>
+

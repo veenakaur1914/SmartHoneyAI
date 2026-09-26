@@ -1,0 +1,260 @@
+name: honeypot-ai-e2e
+
+services:
+  web:
+    environment:
+      APP_URL: ${E2E_APP_URL:-https://localhost}
+
+  api:
+    environment:
+      NODE_ENV: development
+      APP_URL: ${E2E_APP_URL:-https://localhost}
+      PLATFORM_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+      ALLOW_LOCAL_SITE_URLS: "1"
+      TELEGRAM_API_BASE_URL: http://telegram-mock:8080
+
+  worker:
+    environment:
+      NODE_ENV: development
+      APP_URL: ${E2E_APP_URL:-https://localhost}
+      PLATFORM_ADMIN_EMAIL: ${E2E_PLATFORM_ADMIN_EMAIL:-admin@smarthoneyai.local}
+      ANALYSIS_PROVIDER: local
+      ALLOW_LOCAL_ANALYSIS: "1"
+      TELEGRAM_API_BASE_URL: http://telegram-mock:8080
+
+  telegram-mock:
+    image: node:22.14.0-alpine3.21@sha256:9bef0ef1e268f60627da9ba7d7605e8831d5b56ad07487d24d1aa386336d1944
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    command: ["node", "/mock/telegram-mock.mjs"]
+    volumes:
+      - ./local-demo/telegram-mock.mjs:/mock/telegram-mock.mjs:ro
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    ports:
+      - 127.0.0.1:${TELEGRAM_MOCK_PORT:-18099}:8080
+    networks:
+      - egress
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    cpus: 0.25
+
+  nginx:
+    volumes:
+      - ${E2E_SECRET_DIR:-./secrets/e2e}/tls:/etc/nginx/tls:ro
+    ports: !override
+      - 127.0.0.1:${HTTP_PORT:-80}:8080
+      - 127.0.0.1:${HTTPS_PORT:-443}:8443
+
+  wordpress-db:
+    image: mariadb:11.4.12
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD_FILE: /run/secrets/wordpress_db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/wordpress_db_root_password
+    secrets:
+      - wordpress_db_password
+      - wordpress_db_root_password
+    volumes:
+      - wordpress_db_data:/var/lib/mysql
+    networks:
+      - wordpress_data
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1.0
+
+  wordpress:
+    image: wordpress:7.0.0-php8.3-apache
+    restart: unless-stopped
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/wordpress_db_password
+      WORDPRESS_CONFIG_EXTRA: |
+        define('DISABLE_WP_CRON', true);
+        define('HONEYPOT_AI_EXTERNAL_CRON', true);
+        define('WP_ENVIRONMENT_TYPE', 'local');
+      WP_ENVIRONMENT_TYPE: local
+      HONEYPOT_AI_LOCAL_CONTROL_HOST: host.docker.internal
+      HONEYPOT_AI_LOCAL_CONTROL_PORT: "${HTTPS_PORT:-443}"
+      HONEYPOT_AI_LOCAL_CA_FILE: /run/honeypot-ai/tls/control-plane-ca.pem
+      HONEYPOT_AI_TEST_SOURCE_SECRET_FILE: /run/secrets/wordpress_test_source_secret
+      HONEYPOT_AI_TEST_HOST: localhost:8080
+    secrets:
+      - wordpress_db_password
+      - wordpress_test_source_secret
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./plugins/wordpress:/var/www/html/wp-content/plugins/honeypot-ai:ro
+      - ${E2E_SECRET_DIR:-./secrets/e2e}/tls/fullchain.pem:/run/honeypot-ai/tls/control-plane-ca.pem:ro
+    ports:
+      - 127.0.0.1:${WORDPRESS_PORT:-8080}:80
+    networks:
+      - wordpress_data
+      - egress
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php -r '$$s=@fsockopen(\"127.0.0.1\",80); if(!$$s){exit(1);} fclose($$s);'"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+
+  wordpress-provision:
+    image: wordpress:cli-2.12.0-php8.3
+    restart: "no"
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/wordpress_db_password
+      WORDPRESS_URL: http://localhost:8080
+      WORDPRESS_TITLE: SmartHoneyAI Local WordPress
+      WORDPRESS_ADMIN_USER: honeypot-admin
+      WORDPRESS_ADMIN_EMAIL: wordpress-admin@localhost.invalid
+      WORDPRESS_CONFIG_EXTRA: |
+        define('DISABLE_WP_CRON', true);
+        define('HONEYPOT_AI_EXTERNAL_CRON', true);
+        define('WP_ENVIRONMENT_TYPE', 'local');
+    secrets:
+      - wordpress_admin_password
+      - wordpress_db_password
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./plugins/wordpress:/var/www/html/wp-content/plugins/honeypot-ai:ro
+      - ./local-demo:/demo:ro
+    networks:
+      - wordpress_data
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    command: ["sh", "/demo/provision-wordpress.sh"]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 0.5
+
+  wordpress-cron:
+    image: wordpress:cli-2.12.0-php8.3
+    restart: unless-stopped
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/wordpress_db_password
+      HONEYPOT_AI_LOCAL_CONTROL_HOST: host.docker.internal
+      HONEYPOT_AI_LOCAL_CONTROL_PORT: "${HTTPS_PORT:-443}"
+      HONEYPOT_AI_LOCAL_CA_FILE: /run/honeypot-ai/tls/control-plane-ca.pem
+      WORDPRESS_CONFIG_EXTRA: |
+        define('DISABLE_WP_CRON', true);
+        define('HONEYPOT_AI_EXTERNAL_CRON', true);
+        define('WP_ENVIRONMENT_TYPE', 'local');
+    secrets:
+      - wordpress_db_password
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./plugins/wordpress:/var/www/html/wp-content/plugins/honeypot-ai:ro
+      - ./local-demo:/demo:ro
+      - ${E2E_SECRET_DIR:-./secrets/e2e}/tls/fullchain.pem:/run/honeypot-ai/tls/control-plane-ca.pem:ro
+    networks:
+      - wordpress_data
+      - egress
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      wordpress-provision:
+        condition: service_completed_successfully
+    command: ["sh", "/demo/run-wordpress-cron.sh"]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.25
+
+  wordpress-e2e:
+    image: curlimages/curl:8.14.1
+    profiles: ["e2e"]
+    restart: "no"
+    environment:
+      WORDPRESS_INTERNAL_URL: http://wordpress
+      WORDPRESS_TEST_HOST: localhost:8080
+    secrets:
+      - wordpress_test_source_secret
+    volumes:
+      - ./local-demo:/demo:ro
+    networks:
+      - wordpress_data
+    depends_on:
+      wordpress-provision:
+        condition: service_completed_successfully
+    entrypoint: ["sh", "/demo/wordpress-smoke.sh"]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    cpus: 0.25
+
+networks:
+  wordpress_data:
+    internal: true
+
+volumes:
+  wordpress_db_data:
+  wordpress_data:
+
+secrets:
+  postgres_password:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/postgres_password
+  redis_password:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/redis_password
+  session_secret:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/session_secret
+  agent_signing_secret:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/agent_signing_secret
+  policy_signing_private_key:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/policy_signing_private_key
+  policy_signing_public_key:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/policy_signing_public_key
+  grafana_admin_password:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/grafana_admin_password
+  hf_token:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/hf_token
+  telegram_bot_token:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/telegram_bot_token
+  smtp_password:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/smtp_password
+  wordpress_db_password:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/wordpress_db_password
+  wordpress_db_root_password:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/wordpress_db_root_password
+  wordpress_admin_password:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/wordpress_admin_password
+  wordpress_test_source_secret:
+    file: ${E2E_SECRET_DIR:-./secrets/e2e}/wordpress_test_source_secret

@@ -1,0 +1,641 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PLATFORM_ADMIN
+  OWNER
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum SiteStatus {
+  PENDING
+  ONLINE
+  DEGRADED
+  OFFLINE
+  REVOKED
+}
+
+enum SiteKind {
+  WORDPRESS
+  NETWORK_SENSOR
+}
+
+enum WordpressDeploymentType {
+  NORMAL_HOSTING
+  DOCKER
+}
+
+enum EventSourceAttribution {
+  OBSERVED
+  DEMO_OVERRIDE
+}
+
+enum SelfTestStatus {
+  CREATED
+  RUNNING
+  DETECTED
+  CONTAINED
+  CLEANED
+  FAILED
+  EXPIRED
+}
+
+enum EnforcementMode {
+  OBSERVE
+  ENFORCE
+  MONITOR_ONLY
+}
+
+enum EventKind {
+  HONEYPOT
+  FIREWALL
+  RATE_LIMIT
+  PLUGIN_HEALTH
+}
+
+enum EventAction {
+  OBSERVED
+  ALLOWED
+  BLOCKED
+  RATE_LIMITED
+}
+
+enum EventProtocol {
+  HTTP
+  SSH
+  MYSQL
+  REDIS
+}
+
+enum EventActivity {
+  CONNECTION
+  BANNER
+  AUTH_ATTEMPT
+  COMMAND
+  REQUEST
+}
+
+enum ThreatType {
+  BOT
+  SCANNER
+  BRUTE_FORCE
+  SQL_INJECTION
+  XSS
+  COMMAND_INJECTION
+  DIRECTORY_TRAVERSAL
+  CREDENTIAL_STUFFING
+  SERVICE_ABUSE
+  BENIGN
+  UNKNOWN
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AssessmentStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  UNAVAILABLE
+  FAILED
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  DISMISSED
+}
+
+enum RuleType {
+  ALLOW_IP
+  BLOCK_IP
+  BLOCK_COUNTRY
+  BLOCK_USER_AGENT
+  BLOCK_ROUTE
+  RATE_LIMIT
+}
+
+enum RuleSource {
+  MANUAL
+  AI_RECOMMENDED
+  AUTOMATION
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  RETRYING
+}
+
+enum HoneypotSource {
+  BUILT_IN
+  CUSTOM
+}
+
+model Organization {
+  id           String          @id @default(cuid())
+  name         String
+  slug         String          @unique
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  memberships  Membership[]
+  invitations  Invitation[]
+  sites        Site[]
+  events       SecurityEvent[]
+  incidents    Incident[]
+  rules        FirewallRule[]
+  alerts       AlertChannel[]
+  reports      Report[]
+  dailyMetrics DailyMetric[]
+  auditLogs    AuditLog[]
+  selfTestRuns SelfTestRun[]
+}
+
+model User {
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  name                String
+  passwordHash        String
+  isPlatformAdmin     Boolean              @default(false)
+  avatarEmoji         String               @default("🛡️")
+  lastLoginAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  memberships         Membership[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  invitationsSent     Invitation[]         @relation("InvitationSender")
+  incidentsAssigned   Incident[]
+  auditLogs           AuditLog[]
+  selfTestRunsCreated SelfTestRun[]
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  ipHash     String?
+  userAgent  String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model AccessRequest {
+  id           String              @id @default(cuid())
+  name         String
+  email        String
+  company      String
+  websiteCount Int
+  message      String?
+  status       AccessRequestStatus @default(PENDING)
+  reviewedAt   DateTime?
+  createdAt    DateTime            @default(now())
+
+  @@index([status, createdAt])
+}
+
+model Invitation {
+  id             String           @id @default(cuid())
+  organizationId String
+  email          String
+  role           Role
+  tokenHash      String           @unique
+  status         InvitationStatus @default(PENDING)
+  expiresAt      DateTime
+  invitedById    String
+  createdAt      DateTime         @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy      User             @relation("InvitationSender", fields: [invitedById], references: [id])
+
+  @@index([organizationId, email])
+}
+
+model Site {
+  id                    String                   @id @default(cuid())
+  organizationId        String
+  name                  String
+  kind                  SiteKind                 @default(WORDPRESS)
+  deploymentType        WordpressDeploymentType  @default(NORMAL_HOSTING)
+  pairedWordpressSiteId String?
+  url                   String?
+  domain                String?
+  status                SiteStatus               @default(PENDING)
+  enforcementMode       EnforcementMode          @default(OBSERVE)
+  observeUntil          DateTime?
+  autoBlockEnabled      Boolean                  @default(true)
+  pluginVersion         String?
+  sourceIpVerifiedAt    DateTime?
+  currentPolicyVersion  Int                      @default(0)
+  lastSeenAt            DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  organization          Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  enrollmentTokens      EnrollmentToken[]
+  credentials           AgentCredential[]
+  heartbeats            AgentHeartbeat[]
+  sensorHeartbeats      NetworkSensorHeartbeat[]
+  honeypots             HoneypotDeployment[]
+  events                SecurityEvent[]
+  incidents             Incident[]
+  rules                 FirewallRule[]
+  ruleSets              RuleSet[]
+  alerts                AlertDelivery[]
+  pairedWordpressSite   Site?                    @relation("PairedNetworkSensor", fields: [pairedWordpressSiteId], references: [id], onDelete: SetNull)
+  pairedNetworkSensors  Site[]                   @relation("PairedNetworkSensor")
+  wordpressSelfTests    SelfTestRun[]            @relation("SelfTestWordpressSite")
+  sensorSelfTests       SelfTestRun[]            @relation("SelfTestNetworkSensor")
+
+  @@unique([organizationId, domain])
+  @@index([organizationId, status])
+  @@index([organizationId, kind, status])
+  @@index([pairedWordpressSiteId])
+}
+
+model EnrollmentToken {
+  id        String    @id @default(cuid())
+  siteId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  site      Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, expiresAt])
+}
+
+model AgentCredential {
+  id              String    @id @default(cuid())
+  siteId          String
+  keyId           String    @unique
+  secretHash      String
+  secretEncrypted String
+  revokedAt       DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  site            Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, revokedAt])
+}
+
+model AgentHeartbeat {
+  id            String          @id @default(cuid())
+  siteId        String
+  pluginVersion String
+  queueDepth    Int
+  policyVersion Int
+  mode          EnforcementMode
+  health        String
+  enabledDecoys String[]        @default([])
+  droppedEvents Int             @default(0)
+  lastErrorCode String?
+  createdAt     DateTime        @default(now())
+  site          Site            @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, createdAt])
+}
+
+model NetworkSensorHeartbeat {
+  id              String   @id @default(cuid())
+  siteId          String
+  agentVersion    String
+  queueDepth      Int
+  health          String
+  enabledServices String[] @default([])
+  droppedEvents   Int      @default(0)
+  lastErrorCode   String?
+  createdAt       DateTime @default(now())
+  site            Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, createdAt])
+}
+
+model HoneypotDeployment {
+  id        String         @id @default(cuid())
+  siteId    String
+  key       String
+  name      String
+  path      String
+  template  String
+  source    HoneypotSource @default(BUILT_IN)
+  enabled   Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  site      Site           @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, path])
+  @@unique([siteId, key])
+  @@index([siteId, source])
+}
+
+model SecurityEvent {
+  id                String                 @id @default(cuid())
+  organizationId    String
+  siteId            String
+  idempotencyKey    String
+  occurredAt        DateTime
+  receivedAt        DateTime               @default(now())
+  kind              EventKind
+  action            EventAction
+  method            String
+  path              String
+  ipAddress         String
+  ipHash            String
+  countryCode       String?
+  userAgent         String?
+  referrer          String?
+  headers           Json
+  payload           String?
+  payloadHash       String?
+  honeypotKey       String?
+  metadata          Json
+  protocol          EventProtocol?
+  activity          EventActivity?
+  sourcePort        Int?
+  destinationPort   Int?
+  sessionId         String?
+  sourceAttribution EventSourceAttribution @default(OBSERVED)
+  selfTestRunId     String?
+  acknowledgedAt    DateTime?
+  organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  site              Site                   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  assessments       ThreatAssessment[]
+  incidentLinks     IncidentEvent[]
+  alertDeliveries   AlertDelivery[]
+  selfTestRun       SelfTestRun?           @relation(fields: [selfTestRunId], references: [id], onDelete: SetNull)
+
+  @@unique([siteId, idempotencyKey])
+  @@index([organizationId, occurredAt])
+  @@index([siteId, occurredAt])
+  @@index([ipHash, occurredAt])
+  @@index([selfTestRunId, occurredAt])
+}
+
+model SelfTestRun {
+  id              String          @id @default(cuid())
+  organizationId  String
+  wordpressSiteId String
+  networkSensorId String
+  createdByUserId String
+  tokenHash       String          @unique
+  status          SelfTestStatus  @default(CREATED)
+  sourceIp        String?
+  sourceIpHash    String?
+  incidentId      String?
+  firewallRuleId  String?
+  expiresAt       DateTime
+  startedAt       DateTime?
+  containedAt     DateTime?
+  cleanedAt       DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  wordpressSite   Site            @relation("SelfTestWordpressSite", fields: [wordpressSiteId], references: [id], onDelete: Cascade)
+  networkSensor   Site            @relation("SelfTestNetworkSensor", fields: [networkSensorId], references: [id], onDelete: Cascade)
+  createdBy       User            @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  events          SecurityEvent[]
+
+  @@index([organizationId, status, expiresAt])
+  @@index([wordpressSiteId, status])
+  @@index([networkSensorId, status])
+}
+
+model ThreatAssessment {
+  id              String           @id @default(cuid())
+  eventId         String
+  status          AssessmentStatus @default(PENDING)
+  threatType      ThreatType?
+  severity        Severity?
+  confidence      Float?
+  recommendation  String?
+  evidenceSummary String?
+  modelId         String?
+  modelRevision   String?
+  errorCode       String?
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  event           SecurityEvent    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([eventId])
+}
+
+model Incident {
+  id             String          @id @default(cuid())
+  organizationId String
+  siteId         String
+  title          String
+  summary        String
+  severity       Severity
+  status         IncidentStatus  @default(OPEN)
+  threatType     ThreatType
+  sourceIpHash   String?
+  assignedToId   String?
+  firstSeenAt    DateTime
+  lastSeenAt     DateTime
+  resolvedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  site           Site            @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  assignedTo     User?           @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  events         IncidentEvent[]
+
+  @@index([organizationId, status, lastSeenAt])
+}
+
+model IncidentEvent {
+  incidentId String
+  eventId    String
+  incident   Incident      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  event      SecurityEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@id([incidentId, eventId])
+}
+
+model FirewallRule {
+  id             String       @id @default(cuid())
+  organizationId String
+  siteId         String?
+  type           RuleType
+  source         RuleSource   @default(MANUAL)
+  value          String
+  reason         String
+  priority       Int          @default(100)
+  enabled        Boolean      @default(true)
+  expiresAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  site           Site?        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, enabled])
+  @@index([siteId, enabled])
+}
+
+model RuleSet {
+  id               String                @id @default(cuid())
+  siteId           String
+  version          Int
+  policy           Json
+  signature        String
+  sourceHash       String
+  expiresAt        DateTime
+  createdAt        DateTime              @default(now())
+  site             Site                  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  acknowledgements RuleAcknowledgement[]
+
+  @@unique([siteId, version])
+  @@index([siteId, sourceHash, createdAt])
+}
+
+model RuleAcknowledgement {
+  id        String   @id @default(cuid())
+  ruleSetId String
+  status    String
+  message   String?
+  createdAt DateTime @default(now())
+  ruleSet   RuleSet  @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
+
+  @@index([ruleSetId, createdAt])
+}
+
+model AlertChannel {
+  id              String          @id @default(cuid())
+  organizationId  String
+  type            String
+  name            String
+  configEncrypted String
+  enabled         Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries      AlertDelivery[]
+
+  @@index([organizationId, enabled])
+}
+
+model AlertDelivery {
+  id         String         @id @default(cuid())
+  channelId  String
+  siteId     String
+  incidentId String?
+  eventId    String?
+  status     DeliveryStatus @default(PENDING)
+  attempts   Int            @default(0)
+  lastError  String?
+  sentAt     DateTime?
+  createdAt  DateTime       @default(now())
+  channel    AlertChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  site       Site           @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  event      SecurityEvent? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, eventId])
+  @@index([status, createdAt])
+  @@index([eventId])
+}
+
+model DailyMetric {
+  id             String       @id @default(cuid())
+  organizationId String
+  siteId         String?
+  date           DateTime
+  metric         String
+  dimension      String?
+  value          Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, siteId, date, metric, dimension])
+  @@index([organizationId, date])
+}
+
+model Report {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  type           String
+  status         String
+  parameters     Json
+  storagePath    String?
+  createdAt      DateTime     @default(now())
+  completedAt    DateTime?
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+model AuditLog {
+  id             String        @id @default(cuid())
+  organizationId String?
+  userId         String?
+  actorType      String
+  action         String
+  targetType     String
+  targetId       String?
+  requestId      String?
+  reason         String?
+  beforeHash     String?
+  afterHash      String?
+  metadata       Json
+  createdAt      DateTime      @default(now())
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
+}

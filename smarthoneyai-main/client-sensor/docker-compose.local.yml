@@ -1,0 +1,10 @@
+services:
+  network-sensor-agent:
+    environment:
+      SENSOR_RUNTIME_PROFILE: local-self-test
+      SENSOR_DEMO_SOURCE_IP: ${SENSOR_DEMO_SOURCE_IP:?Set the presenter public IP}
+      SENSOR_DEMO_RUN_ID: ${SENSOR_DEMO_RUN_ID:?Set the active self-test run ID}
+      PROVIDER_FIREWALL_ALLOWLIST_CONFIRMED: LOCAL_ONLY
+      NODE_EXTRA_CA_CERTS: /run/smarthoneyai/control-plane-ca.pem
+    volumes:
+      - ${LOCAL_CONTROL_PLANE_CA_FILE:-../secrets/e2e/tls/fullchain.pem}:/run/smarthoneyai/control-plane-ca.pem:ro

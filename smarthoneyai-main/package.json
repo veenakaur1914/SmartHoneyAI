@@ -1,0 +1,33 @@
+{
+  "name": "honeypot-ai",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.34.4",
+  "engines": { "node": ">=20.9.0" },
+  "scripts": {
+    "postinstall": "pnpm db:generate",
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "guard:production-fixtures": "node scripts/guard-production-fixtures.mjs",
+    "db:generate": "pnpm --filter @honeypot/database prisma:generate",
+    "db:migrate": "pnpm --filter @honeypot/database prisma:migrate",
+    "db:seed": "pnpm --filter @honeypot/database prisma:seed",
+    "smoke:control-plane": "node scripts/control-plane-smoke.mjs",
+    "smoke:agent-security": "node scripts/agent-security-smoke.mjs",
+    "smoke:connection-state": "node scripts/connection-state-smoke.mjs",
+    "smoke:production-core-auth": "node scripts/production-core-auth-smoke.mjs",
+    "package:clients": "sh scripts/package-client-sensors.sh",
+    "self-test:sensors": "node scripts/sensor-self-test.mjs",
+    "demo:local:up": "sh scripts/local-demo-up.sh",
+    "demo:local:e2e": "sh scripts/run-local-e2e.sh",
+    "demo:attack:wordpress": "sh scripts/run-demo-attack.sh wordpress",
+    "demo:attack:docker": "sh scripts/run-demo-attack.sh docker",
+    "demo:bot-simulation": "sh scripts/run-bot-simulation.sh",
+    "demo:trigger-honeypots": "python3 scripts/honeypot-demo-cli.py",
+    "demo:production-simulation": "sh scripts/run-production-simulation.sh"
+  },
+  "devDependencies": { "turbo": "^2.5.4", "typescript": "^5.8.3" }
+}

@@ -1,0 +1,29 @@
+services:
+  mock-control-plane:
+    build:
+      context: ./test
+    networks:
+      - sensor_egress
+    ports:
+      - "127.0.0.1:14088:4088"
+
+  network-sensor-agent:
+    environment:
+      SENSOR_RUNTIME_PROFILE: local-package-test
+      NETWORK_SENSOR_NAME: local-package-test
+      NETWORK_SENSOR_ENROLLMENT_TOKEN: local-package-test-token-00000000000000000000
+      NETWORK_SENSOR_CONTROL_PLANE_URL: http://mock-control-plane:4088
+      NETWORK_SENSOR_ALLOWLIST: 127.0.0.1
+      PROVIDER_FIREWALL_ALLOWLIST_CONFIRMED: LOCAL_ONLY
+    ports:
+      - "127.0.0.1:11514:1514"
+      - "127.0.0.1:14010:4010"
+    depends_on:
+      mock-control-plane:
+        condition: service_started
+
+  opencanary:
+    ports: !override
+      - "127.0.0.1:2222:2222"
+      - "127.0.0.1:13306:13306"
+      - "127.0.0.1:16379:16379"

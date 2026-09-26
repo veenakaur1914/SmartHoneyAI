@@ -1,0 +1,420 @@
+name: honeypot-ai-dokploy
+
+# Dokploy terminates TLS with Traefik and routes the public domain to the
+# nginx service on container port 8080. No service publishes a host port.
+
+x-app-common: &app-common
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-database-environment: &database-environment
+  INTERNAL_SERVICE_URLS: "1"
+  POSTGRES_USER: ${POSTGRES_USER:-honeypot}
+  POSTGRES_DB: ${POSTGRES_DB:-honeypot_ai}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Dokploy}
+
+services:
+  postgres:
+    image: postgres:17.5-alpine3.22
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-honeypot}
+      POSTGRES_DB: ${POSTGRES_DB:-honeypot_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Dokploy}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1536m
+    cpus: 2.0
+
+  redis:
+    image: redis:8.0.2-alpine3.21
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in Dokploy}
+    command:
+      - sh
+      - -ec
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    volumes:
+      - redis_data:/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+      args:
+        APP_FILTER: "@honeypot/database"
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      <<: *database-environment
+      NODE_ENV: production
+      APP_COMMAND: prisma:deploy
+    networks:
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
+
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+      args:
+        APP_FILTER: "@honeypot/database"
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      <<: *database-environment
+      NODE_ENV: production
+      APP_URL: ${APP_URL:?Set APP_URL in Dokploy}
+      APP_COMMAND: prisma:seed
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:?Set PLATFORM_ADMIN_EMAIL in Dokploy}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?Set PLATFORM_ADMIN_PASSWORD in Dokploy}
+      PLATFORM_ORGANIZATION_NAME: ${PLATFORM_ORGANIZATION_NAME:-Professional Security Operations}
+      PLATFORM_ORGANIZATION_SLUG: ${PLATFORM_ORGANIZATION_SLUG:-smarthoneyai-operations}
+      RESET_PLATFORM_ADMIN_PASSWORD: ${RESET_PLATFORM_ADMIN_PASSWORD:-0}
+    networks:
+      - data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 256m
+    cpus: 0.5
+
+  api:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_FILTER: "@honeypot/api"
+        APP_COMMAND: start
+    environment:
+      <<: *database-environment
+      NODE_ENV: production
+      APP_URL: ${APP_URL:?Set APP_URL in Dokploy}
+      APP_FILTER: "@honeypot/api"
+      APP_COMMAND: start
+      PORT: "4000"
+      HOSTNAME: 0.0.0.0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in Dokploy}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in Dokploy}
+      AGENT_SIGNING_SECRET: ${AGENT_SIGNING_SECRET:?Set AGENT_SIGNING_SECRET in Dokploy}
+      POLICY_SIGNING_PRIVATE_KEY: ${POLICY_SIGNING_PRIVATE_KEY:?Set POLICY_SIGNING_PRIVATE_KEY in Dokploy}
+      POLICY_SIGNING_PUBLIC_KEY: ${POLICY_SIGNING_PUBLIC_KEY:?Set POLICY_SIGNING_PUBLIC_KEY in Dokploy}
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-}"
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:?Set PLATFORM_ADMIN_EMAIL in Dokploy}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_CHAT_MODEL: ${HF_CHAT_MODEL:-Qwen/Qwen2.5-7B-Instruct-1M:cheapest}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    expose:
+      - "4000"
+    networks:
+      app:
+        aliases:
+          - smarthoneyai-api
+      data:
+      egress:
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4000/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+    mem_limit: 768m
+    cpus: 1.5
+
+  worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_FILTER: "@honeypot/worker"
+        APP_COMMAND: start
+    environment:
+      <<: *database-environment
+      NODE_ENV: production
+      APP_URL: ${APP_URL:?Set APP_URL in Dokploy}
+      APP_FILTER: "@honeypot/worker"
+      APP_COMMAND: start
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in Dokploy}
+      ANALYSIS_PROVIDER: huggingface
+      HF_MODEL_ID: ${HF_MODEL_ID:-MoritzLaurer/deberta-v3-base-zeroshot-v1}
+      HF_MODEL_REVISION: ${HF_MODEL_REVISION:?Set an immutable HF_MODEL_REVISION in Dokploy}
+      HF_TOKEN: ${HF_TOKEN:?Set HF_TOKEN in Dokploy}
+      HF_CHAT_MODEL: ${HF_CHAT_MODEL:-Qwen/Qwen2.5-7B-Instruct-1M:cheapest}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      ANALYSIS_CONCURRENCY: ${ANALYSIS_CONCURRENCY:-4}
+      ANALYSIS_RATE_LIMIT_MAX: ${ANALYSIS_RATE_LIMIT_MAX:-30}
+      WORKER_HEALTH_PORT: "4001"
+    expose:
+      - "4001"
+    networks:
+      - app
+      - data
+      - egress
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4001/health/ready || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    mem_limit: 1024m
+    cpus: 2.0
+
+  web:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_FILTER: "@honeypot/web"
+        APP_COMMAND: start
+        NEXT_PUBLIC_API_URL: /v1
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:?Set APP_URL in Dokploy}
+      API_URL: http://api:4000
+      NEXT_PUBLIC_API_URL: /v1
+      APP_FILTER: "@honeypot/web"
+      APP_COMMAND: start
+    expose:
+      - "3000"
+    networks:
+      app:
+        aliases:
+          - smarthoneyai-web
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/health/ready || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    mem_limit: 512m
+    cpus: 1.0
+
+  nginx:
+    # Build the proxy config into the image so `docker compose up --build`
+    # recreates nginx whenever nginx.dokploy.conf changes.
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile.dokploy
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.services.smarthoneyai-nginx.loadbalancer.server.port=8080
+      - "traefik.http.routers.smarthoneyai-http.rule=Host(`${TRAEFIK_HOST:?Set TRAEFIK_HOST in Dokploy}`)"
+      - traefik.http.routers.smarthoneyai-http.entrypoints=web
+      - traefik.http.routers.smarthoneyai-http.priority=10000
+      - traefik.http.routers.smarthoneyai-http.service=smarthoneyai-nginx
+      - traefik.http.routers.smarthoneyai-http.middlewares=smarthoneyai-force-https
+      - traefik.http.middlewares.smarthoneyai-force-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.smarthoneyai-force-https.redirectscheme.permanent=true
+      - "traefik.http.routers.smarthoneyai-https.rule=Host(`${TRAEFIK_HOST:?Set TRAEFIK_HOST in Dokploy}`)"
+      - traefik.http.routers.smarthoneyai-https.entrypoints=websecure
+      - traefik.http.routers.smarthoneyai-https.priority=10000
+      - traefik.http.routers.smarthoneyai-https.service=smarthoneyai-nginx
+      - traefik.http.routers.smarthoneyai-https.tls=true
+      - traefik.http.routers.smarthoneyai-https.tls.certresolver=letsencrypt
+    user: "101:101"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /var/run:size=1m
+      - /tmp:size=48m,mode=1777
+    expose:
+      - "8080"
+    networks:
+      - app
+      - dokploy-network
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 256m
+    cpus: 0.5
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    restart: unless-stopped
+    read_only: true
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - app
+      - monitoring
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9090/-/ready || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.75
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    read_only: true
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9093/-/ready || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.25
+
+  grafana:
+    image: grafana/grafana:12.0.2
+    restart: unless-stopped
+    user: "472:472"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in Dokploy}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_HTTP_ADDR: 0.0.0.0
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - monitoring
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 384m
+    cpus: 0.5
+
+networks:
+  app:
+    internal: true
+  data:
+    internal: true
+  egress:
+  monitoring:
+    internal: true
+  dokploy-network:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

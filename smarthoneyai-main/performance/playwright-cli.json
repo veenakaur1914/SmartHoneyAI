@@ -1,0 +1,12 @@
+{
+  "browser": {
+    "launchOptions": {
+      "headless": true,
+      "args": ["--ignore-certificate-errors"]
+    },
+    "contextOptions": {
+      "ignoreHTTPSErrors": true,
+      "viewport": { "width": 1440, "height": 1000 }
+    }
+  }
+}

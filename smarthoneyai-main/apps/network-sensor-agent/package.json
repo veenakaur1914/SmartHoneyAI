@@ -1,0 +1,22 @@
+{
+  "name": "@honeypot/network-sensor-agent",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --platform node --sourcemap --clean --minify --define.__SENSOR_DEMO_BUILD__=false",
+    "build:demo": "tsup src/index.ts --format esm --platform node --sourcemap --clean --minify --define.__SENSOR_DEMO_BUILD__=true",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.32",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
